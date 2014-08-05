@@ -71,6 +71,16 @@ func (p *epsilonGreedyHostPool) SetEpsilon(newEpsilon float32) {
 	p.epsilon = newEpsilon
 }
 
+func (p *epsilonGreedyHostPool) SetHosts(hosts []string) {
+	p.Lock()
+	defer p.Unlock()
+	p.standardHostPool.setHosts(hosts)
+	for _, h := range p.hostList {
+		h.epsilonCounts = make([]int64, epsilonBuckets)
+		h.epsilonValues = make([]int64, epsilonBuckets)
+	}
+}
+
 func (p *epsilonGreedyHostPool) epsilonGreedyDecay() {
 	durationPerBucket := p.decayDuration / epsilonBuckets
 	ticker := time.Tick(durationPerBucket)
