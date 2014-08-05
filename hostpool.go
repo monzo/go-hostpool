@@ -45,6 +45,7 @@ type HostPool interface {
 
 	ResetAll()
 	Hosts() []string
+	SetHosts([]string)
 }
 
 type standardHostPool struct {
@@ -144,6 +145,26 @@ func (p *standardHostPool) ResetAll() {
 	p.Lock()
 	defer p.Unlock()
 	p.doResetAll()
+}
+
+func (p *standardHostPool) SetHosts(hosts []string) {
+	p.Lock()
+	defer p.Unlock()
+	p.setHosts(hosts)
+}
+
+func (p *standardHostPool) setHosts(hosts []string) {
+	p.hosts = make(map[string]*hostEntry, len(hosts))
+	p.hostList = make([]*hostEntry, len(hosts))
+
+	for i, h := range hosts {
+		e := &hostEntry{
+			host:       h,
+			retryDelay: p.initialRetryDelay,
+		}
+		p.hosts[h] = e
+		p.hostList[i] = e
+	}
 }
 
 // this actually performs the logic to reset,
