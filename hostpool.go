@@ -146,7 +146,7 @@ func (p *standardHostPool) getRoundRobin() string {
 	}
 
 	// all hosts are down and returnUnhealhy is false then return no host
-	if p.returnUnhealthy {
+	if !p.returnUnhealthy {
 		return ""
 	}
 
