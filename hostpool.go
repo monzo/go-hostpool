@@ -65,14 +65,6 @@ type standardHostPool struct {
 	nextHostIndex     int
 }
 
-// ------ constants -------------------
-
-const epsilonBuckets = 120
-const epsilonDecay = 0.90 // decay the exploration rate
-const minEpsilon = 0.01   // explore one percent of the time
-const initialEpsilon = 0.3
-const defaultDecayDuration = time.Duration(5) * time.Minute
-
 // Construct a basic HostPool using the hostnames provided
 func New(hosts []string) HostPool {
 	p := &standardHostPool{
