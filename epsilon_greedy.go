@@ -113,7 +113,7 @@ func (p *epsilonGreedyHostPool) performEpsilonGreedyDecay() {
 		h.activeBucket.Lock(numberOfBuckets)
 		h.historicBuckets = append(h.historicBuckets, h.activeBucket)
 		if len(h.historicBuckets) > numberOfBuckets {
-			start := len(h.historicBuckets) - 1 - numberOfBuckets
+			start := len(h.historicBuckets) - numberOfBuckets
 			h.historicBuckets = h.historicBuckets[start:]
 		}
 		h.activeBucket = &epsilonBucket{}
@@ -219,10 +219,10 @@ func (p *epsilonGreedyHostPool) markSuccess(hostR HostPoolResponse) {
 
 type epsilonBucket struct {
 	count int64
-	total time.Duration
+	total float64
 
-	locked           bool            // a locked bucket allows for no more additions in this bucket
-	weightedAverages []time.Duration // weightedAverages stores the fractional weighted averages
+	locked           bool      // a locked bucket allows for no more additions in this bucket
+	weightedAverages []float64 // weightedAverages stores the fractional weighted averages in nanoseconds
 }
 
 func (b *epsilonBucket) Add(d time.Duration) {
@@ -230,15 +230,18 @@ func (b *epsilonBucket) Add(d time.Duration) {
 		panic("attempted to add to a locked bucket")
 	}
 	b.count++
-	b.total += d
+	b.total += float64(d.Milliseconds())
 }
 
 func (b *epsilonBucket) Count() int64 {
 	return b.count
 }
 
-func (b *epsilonBucket) Average() time.Duration {
-	return b.total / time.Duration(b.count)
+func (b *epsilonBucket) Average() float64 {
+	if b.count == 0 {
+		return 0
+	}
+	return b.total / float64(b.count)
 }
 
 func (b *epsilonBucket) Lock(numberOfBuckets int) {
@@ -247,15 +250,15 @@ func (b *epsilonBucket) Lock(numberOfBuckets int) {
 }
 
 func (b *epsilonBucket) calculateAverages(numberOfBuckets int) {
-	b.weightedAverages = make([]time.Duration, 0, numberOfBuckets)
+	b.weightedAverages = make([]float64, 0, numberOfBuckets)
 	averageDuration := b.Average()
 	for i := 0; i < numberOfBuckets; i++ {
 		weight := float64(i) / float64(numberOfBuckets)
-		b.weightedAverages = append(b.weightedAverages, averageDuration*time.Duration(weight))
+		b.weightedAverages = append(b.weightedAverages, averageDuration*weight)
 	}
 }
 
-func (b *epsilonBucket) WeightedAverage(index int) time.Duration {
+func (b *epsilonBucket) WeightedAverage(index int) float64 {
 	if len(b.weightedAverages) < index {
 		panic("got invalid index")
 	}

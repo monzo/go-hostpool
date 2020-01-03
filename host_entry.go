@@ -40,8 +40,8 @@ func (h *hostEntry) willRetryHost(maxRetryInterval time.Duration) {
 	h.nextRetry = time.Now().Add(h.retryDelay)
 }
 
-func (h *hostEntry) getWeightedAverageResponseTime() time.Duration {
-	var value time.Duration
+func (h *hostEntry) getWeightedAverageResponseTime() float64 {
+	var value float64
 	var lastBucket *epsilonBucket
 
 	for i, bucket := range h.historicBuckets {
