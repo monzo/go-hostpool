@@ -209,7 +209,7 @@ func (p *epsilonGreedyHostPool) markSuccess(hostR HostPoolResponse) {
 		log.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 	h.epsilonCounts[h.epsilonIndex]++
-	h.epsilonValues[h.epsilonIndex] += int64(duration.Seconds() * 1000)
+	h.epsilonValues[h.epsilonIndex] += duration.Milliseconds()
 }
 
 // --- timer: this just exists for testing
