@@ -7,13 +7,14 @@ import (
 // --- hostEntry - this is due to get upgraded
 
 type hostEntry struct {
-	host              string
-	nextRetry         time.Time
-	retryCount        int16
-	retryDelay        time.Duration
-	dead              bool
-	epsilonBuckets    []*epsilonBucket
-	epsilonIndex      int
+	host            string
+	nextRetry       time.Time
+	retryCount      int16
+	retryDelay      time.Duration
+	dead            bool
+	historicBuckets []*epsilonBucket
+	activeBucket    *epsilonBucket
+
 	epsilonValue      float64
 	epsilonPercentage float64
 }

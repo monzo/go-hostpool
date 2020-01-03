@@ -6,11 +6,13 @@ import (
 	"time"
 )
 
-const numberOfBuckets = 120
-const epsilonDecay = 0.90 // decay the exploration rate
-const minEpsilon = 0.01   // explore one percent of the time
-const initialEpsilon = 0.3
-const defaultDecayDuration = time.Duration(5) * time.Minute
+const (
+	numberOfBuckets      = 120
+	epsilonDecay         = 0.90 // decay the exploration rate
+	minEpsilon           = 0.01 // explore one percent of the time
+	initialEpsilon       = 0.3
+	defaultDecayDuration = time.Duration(5) * time.Minute
+)
 
 type epsilonHostPoolResponse struct {
 	standardHostPoolResponse
@@ -64,10 +66,8 @@ func NewEpsilonGreedy(hosts []string, decayDuration time.Duration, calc EpsilonV
 
 	// allocate structures
 	for _, h := range p.hostList {
-		h.epsilonBuckets = make([]*epsilonBucket, numberOfBuckets)
-		for i := 0; i < len(h.epsilonBuckets); i++ {
-			h.epsilonBuckets[i] = new(epsilonBucket)
-		}
+		h.historicBuckets = make([]*epsilonBucket, 0, numberOfBuckets)
+		h.activeBucket = &epsilonBucket{}
 	}
 	go p.epsilonGreedyDecay()
 	return p
@@ -89,10 +89,7 @@ func (p *epsilonGreedyHostPool) SetHosts(hosts []string) {
 	defer p.Unlock()
 	p.standardHostPool.setHosts(hosts)
 	for _, h := range p.hostList {
-		h.epsilonBuckets = make([]*epsilonBucket, numberOfBuckets)
-		for i := 0; i < len(h.epsilonBuckets); i++ {
-			h.epsilonBuckets[i] = new(epsilonBucket)
-		}
+		h.historicBuckets = make([]*epsilonBucket, 0, numberOfBuckets)
 	}
 }
 
@@ -113,9 +110,13 @@ func (p *epsilonGreedyHostPool) epsilonGreedyDecay() {
 func (p *epsilonGreedyHostPool) performEpsilonGreedyDecay() {
 	p.Lock()
 	for _, h := range p.hostList {
-		h.epsilonIndex++
-		h.epsilonIndex = h.epsilonIndex % numberOfBuckets
-		h.epsilonBuckets[h.epsilonIndex].Reset()
+		h.activeBucket.Lock(numberOfBuckets)
+		h.historicBuckets = append(h.historicBuckets, h.activeBucket)
+		if len(h.historicBuckets) > numberOfBuckets {
+			start := len(h.historicBuckets) - 1 - numberOfBuckets
+			h.historicBuckets = h.historicBuckets[start:]
+		}
+		h.activeBucket = &epsilonBucket{}
 	}
 	p.Unlock()
 }
@@ -213,15 +214,21 @@ func (p *epsilonGreedyHostPool) markSuccess(hostR HostPoolResponse) {
 		log.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 
-	h.epsilonBuckets[h.epsilonIndex].Add(duration)
+	h.activeBucket.Add(duration)
 }
 
 type epsilonBucket struct {
 	count int64
 	total time.Duration
+
+	locked           bool            // a locked bucket allows for no more additions in this bucket
+	weightedAverages []time.Duration // weightedAverages stores the fractional weighted averages
 }
 
 func (b *epsilonBucket) Add(d time.Duration) {
+	if b.locked {
+		panic("attempted to add to a locked bucket")
+	}
 	b.count++
 	b.total += d
 }
@@ -234,9 +241,25 @@ func (b *epsilonBucket) Average() time.Duration {
 	return b.total / time.Duration(b.count)
 }
 
-func (b *epsilonBucket) Reset() {
-	b.count = 0
-	b.total = time.Duration(0)
+func (b *epsilonBucket) Lock(numberOfBuckets int) {
+	b.locked = true
+	b.calculateAverages(numberOfBuckets)
+}
+
+func (b *epsilonBucket) calculateAverages(numberOfBuckets int) {
+	b.weightedAverages = make([]time.Duration, 0, numberOfBuckets)
+	averageDuration := b.Average()
+	for i := 0; i < numberOfBuckets; i++ {
+		weight := float64(i) / float64(numberOfBuckets)
+		b.weightedAverages = append(b.weightedAverages, averageDuration*time.Duration(weight))
+	}
+}
+
+func (b *epsilonBucket) WeightedAverage(index int) time.Duration {
+	if len(b.weightedAverages) < index {
+		panic("got invalid index")
+	}
+	return b.weightedAverages[index]
 }
 
 // --- timer: this just exists for testing
