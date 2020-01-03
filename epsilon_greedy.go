@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const epsilonBuckets = 120
+const numberOfBuckets = 120
 const epsilonDecay = 0.90 // decay the exploration rate
 const minEpsilon = 0.01   // explore one percent of the time
 const initialEpsilon = 0.3
@@ -64,8 +64,10 @@ func NewEpsilonGreedy(hosts []string, decayDuration time.Duration, calc EpsilonV
 
 	// allocate structures
 	for _, h := range p.hostList {
-		h.epsilonCounts = make([]int64, epsilonBuckets)
-		h.epsilonValues = make([]int64, epsilonBuckets)
+		h.epsilonBuckets = make([]*epsilonBucket, numberOfBuckets)
+		for i := 0; i < len(h.epsilonBuckets); i++ {
+			h.epsilonBuckets[i] = new(epsilonBucket)
+		}
 	}
 	go p.epsilonGreedyDecay()
 	return p
@@ -87,13 +89,15 @@ func (p *epsilonGreedyHostPool) SetHosts(hosts []string) {
 	defer p.Unlock()
 	p.standardHostPool.setHosts(hosts)
 	for _, h := range p.hostList {
-		h.epsilonCounts = make([]int64, epsilonBuckets)
-		h.epsilonValues = make([]int64, epsilonBuckets)
+		h.epsilonBuckets = make([]*epsilonBucket, numberOfBuckets)
+		for i := 0; i < len(h.epsilonBuckets); i++ {
+			h.epsilonBuckets[i] = new(epsilonBucket)
+		}
 	}
 }
 
 func (p *epsilonGreedyHostPool) epsilonGreedyDecay() {
-	durationPerBucket := p.decayDuration / epsilonBuckets
+	durationPerBucket := p.decayDuration / numberOfBuckets
 	ticker := time.NewTicker(durationPerBucket)
 	for {
 		select {
@@ -105,13 +109,13 @@ func (p *epsilonGreedyHostPool) epsilonGreedyDecay() {
 		}
 	}
 }
+
 func (p *epsilonGreedyHostPool) performEpsilonGreedyDecay() {
 	p.Lock()
 	for _, h := range p.hostList {
-		h.epsilonIndex += 1
-		h.epsilonIndex = h.epsilonIndex % epsilonBuckets
-		h.epsilonCounts[h.epsilonIndex] = 0
-		h.epsilonValues[h.epsilonIndex] = 0
+		h.epsilonIndex++
+		h.epsilonIndex = h.epsilonIndex % numberOfBuckets
+		h.epsilonBuckets[h.epsilonIndex].Reset()
 	}
 	p.Unlock()
 }
@@ -143,7 +147,7 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
 		return p.getRoundRobin()
 	}
 
-	// calculate values for each host in the 0..1 range (but not ormalized)
+	// calculate values for each host in the 0..1 range (but not normalized)
 	var possibleHosts []*hostEntry
 	now := time.Now()
 	var sumValues float64
@@ -208,8 +212,31 @@ func (p *epsilonGreedyHostPool) markSuccess(hostR HostPoolResponse) {
 	if !ok {
 		log.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
-	h.epsilonCounts[h.epsilonIndex]++
-	h.epsilonValues[h.epsilonIndex] += duration.Milliseconds()
+
+	h.epsilonBuckets[h.epsilonIndex].Add(duration)
+}
+
+type epsilonBucket struct {
+	count int64
+	total time.Duration
+}
+
+func (b *epsilonBucket) Add(d time.Duration) {
+	b.count++
+	b.total += d
+}
+
+func (b *epsilonBucket) Count() int64 {
+	return b.count
+}
+
+func (b *epsilonBucket) Average() time.Duration {
+	return b.total / time.Duration(b.count)
+}
+
+func (b *epsilonBucket) Reset() {
+	b.count = 0
+	b.total = time.Duration(0)
 }
 
 // --- timer: this just exists for testing

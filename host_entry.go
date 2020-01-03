@@ -12,8 +12,7 @@ type hostEntry struct {
 	retryCount        int16
 	retryDelay        time.Duration
 	dead              bool
-	epsilonCounts     []int64
-	epsilonValues     []int64
+	epsilonBuckets    []*epsilonBucket
 	epsilonIndex      int
 	epsilonValue      float64
 	epsilonPercentage float64
@@ -30,7 +29,7 @@ func (h *hostEntry) canTryHost(now time.Time) bool {
 }
 
 func (h *hostEntry) willRetryHost(maxRetryInterval time.Duration) {
-	h.retryCount += 1
+	h.retryCount++
 	newDelay := h.retryDelay * 2
 	if newDelay < maxRetryInterval {
 		h.retryDelay = newDelay
@@ -45,14 +44,14 @@ func (h *hostEntry) getWeightedAverageResponseTime() float64 {
 	var lastValue float64
 
 	// start at 1 so we start with the oldest entry
-	buckets := len(h.epsilonCounts)
-	for i := 1; i <= buckets; i += 1 {
+	buckets := len(h.epsilonBuckets)
+	for i := 1; i <= buckets; i++ {
 		pos := (h.epsilonIndex + i) % buckets
-		bucketCount := h.epsilonCounts[pos]
+		bucket := h.epsilonBuckets[pos]
 		// Changing the line below to what I think it should be to get the weights right
 		weight := float64(i) / float64(buckets)
-		if bucketCount > 0 {
-			currentValue := float64(h.epsilonValues[pos]) / float64(bucketCount)
+		if bucket.Count() > 0 {
+			currentValue := float64(bucket.Average())
 			value += currentValue * weight
 			lastValue = currentValue
 		} else {
