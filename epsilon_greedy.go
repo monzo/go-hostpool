@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+const epsilonBuckets = 120
+const epsilonDecay = 0.90 // decay the exploration rate
+const minEpsilon = 0.01   // explore one percent of the time
+const initialEpsilon = 0.3
+const defaultDecayDuration = time.Duration(5) * time.Minute
+
 type epsilonHostPoolResponse struct {
 	standardHostPoolResponse
 	started time.Time
@@ -43,7 +49,6 @@ type epsilonGreedyHostPool struct {
 // `decayDuration`. decayDuration may be set to 0 to use the default value of 5 minutes
 // We then use the supplied EpsilonValueCalculator to calculate a score from that weighted average response time.
 func NewEpsilonGreedy(hosts []string, decayDuration time.Duration, calc EpsilonValueCalculator) HostPool {
-
 	if decayDuration <= 0 {
 		decayDuration = defaultDecayDuration
 	}

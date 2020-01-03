@@ -2,13 +2,15 @@ package hostpool
 
 import (
 	"errors"
-	"github.com/bmizerany/assert"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/bmizerany/assert"
 )
 
 func TestHostPool(t *testing.T) {
@@ -132,6 +134,35 @@ func BenchmarkEpsilonGreedy(b *testing.B) {
 
 	// Make the hostpool with a few hosts
 	p := NewEpsilonGreedy([]string{"a", "b"}, 0, &LinearEpsilonValueCalculator{}).(*epsilonGreedyHostPool)
+
+	b.StartTimer()
+	for i := 0; i < b.N; i++ {
+		if i != 0 && i%100 == 0 {
+			p.performEpsilonGreedyDecay()
+		}
+		hostR := p.Get()
+		p.timer = &mockTimer{t: int(timings[i])}
+		hostR.Mark(nil)
+	}
+}
+
+func BenchmarkEpsilonGreedyManyHosts(b *testing.B) {
+	b.StopTimer()
+
+	// Make up some response times
+	zipfDist := rand.NewZipf(rand.New(rand.NewSource(0)), 1.1, 5, 5000)
+	timings := make([]uint64, b.N)
+	for i := 0; i < b.N; i++ {
+		timings[i] = zipfDist.Uint64()
+	}
+
+	// Make the hostpool with a few hosts
+	const hostCount = 50
+	hosts := make([]string, 0, hostCount)
+	for i := 0; i < hostCount; i++ {
+		hosts = append(hosts, fmt.Sprintf("%d", i))
+	}
+	p := NewEpsilonGreedy(hosts, 0, &LinearEpsilonValueCalculator{}).(*epsilonGreedyHostPool)
 
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
