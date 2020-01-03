@@ -156,7 +156,7 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
 		if h.canTryHost(now) {
 			v := h.getWeightedAverageResponseTime()
 			if v > 0 {
-				ev := p.CalcValueFromAvgResponseTime(v)
+				ev := p.CalcValueFromAvgResponseTime(float64(v))
 				h.epsilonValue = ev
 				sumValues += ev
 				possibleHosts = append(possibleHosts, h)

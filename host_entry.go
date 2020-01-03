@@ -40,23 +40,16 @@ func (h *hostEntry) willRetryHost(maxRetryInterval time.Duration) {
 	h.nextRetry = time.Now().Add(h.retryDelay)
 }
 
-func (h *hostEntry) getWeightedAverageResponseTime() float64 {
-	var value float64
-	var lastValue float64
+func (h *hostEntry) getWeightedAverageResponseTime() time.Duration {
+	var value time.Duration
+	var lastBucket *epsilonBucket
 
-	// start at 1 so we start with the oldest entry
-	buckets := len(h.epsilonBuckets)
-	for i := 1; i <= buckets; i++ {
-		pos := (h.epsilonIndex + i) % buckets
-		bucket := h.epsilonBuckets[pos]
-		// Changing the line below to what I think it should be to get the weights right
-		weight := float64(i) / float64(buckets)
+	for i, bucket := range h.historicBuckets {
 		if bucket.Count() > 0 {
-			currentValue := float64(bucket.Average())
-			value += currentValue * weight
-			lastValue = currentValue
-		} else {
-			value += lastValue * weight
+			value += bucket.WeightedAverage(i)
+			lastBucket = bucket
+		} else if lastBucket != nil {
+			value += lastBucket.WeightedAverage(i)
 		}
 	}
 	return value
