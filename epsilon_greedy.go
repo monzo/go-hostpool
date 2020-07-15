@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+type EpsilonGreedyOptions struct {
+	Hosts          []string
+	DecayDuration  time.Duration
+	Calc           EpsilonValueCalculator
+	InitialEpsilon float64
+	EpsilonBuckets int
+	EpsilonDecay   float32
+	MinEpsilon     float32
+}
+
+const defaultEpsilonBuckets = 120
+const defaultEpsilonDecay = 0.90 // decay the exploration rate
+const defaultMinEpsilon = 0.01   // explore one percent of the time
+const defaultInitialEpsilon = 0.3
+const defaultDecayDuration = time.Duration(5) * time.Minute
+
 type epsilonHostPoolResponse struct {
 	standardHostPoolResponse
 	started time.Time
@@ -20,9 +36,17 @@ func (r *epsilonHostPoolResponse) Mark(err error) {
 }
 
 type epsilonGreedyHostPool struct {
-	standardHostPool               // TODO - would be nifty if we could embed HostPool and Locker interfaces
-	epsilon                float32 // this is our exploration factor
-	decayDuration          time.Duration
+	standardHostPool         // TODO - would be nifty if we could embed HostPool and Locker interfaces
+	epsilon          float32 // this is our exploration factor - it decreases over time
+
+	// these are input parameters to the calculation of the weighted averages
+	decayDuration  time.Duration
+	epsilonBuckets int
+
+	// these are input parameters to the calulation of epsilon (exploration factor)
+	epsilonDecay float32
+	minEpsilon   float32
+
 	EpsilonValueCalculator // embed the epsilonValueCalculator
 	timer
 	quit chan bool
@@ -43,24 +67,38 @@ type epsilonGreedyHostPool struct {
 // `decayDuration`. decayDuration may be set to 0 to use the default value of 5 minutes
 // We then use the supplied EpsilonValueCalculator to calculate a score from that weighted average response time.
 func NewEpsilonGreedy(hosts []string, decayDuration time.Duration, calc EpsilonValueCalculator) HostPool {
+	return NewEpsilonGreedyWithOptions(EpsilonGreedyOptions{
+		Hosts:          hosts,
+		DecayDuration:  decayDuration,
+		Calc:           calc,
+		InitialEpsilon: defaultInitialEpsilon,
+		EpsilonBuckets: defaultEpsilonBuckets,
+		EpsilonDecay:   defaultEpsilonDecay,
+		MinEpsilon:     defaultMinEpsilon,
+	})
+}
 
-	if decayDuration <= 0 {
-		decayDuration = defaultDecayDuration
+func NewEpsilonGreedyWithOptions(options EpsilonGreedyOptions) HostPool {
+	if options.DecayDuration <= 0 {
+		options.DecayDuration = defaultDecayDuration
 	}
-	stdHP := New(hosts).(*standardHostPool)
+
+	stdHP := New(options.Hosts).(*standardHostPool)
 	p := &epsilonGreedyHostPool{
 		standardHostPool:       *stdHP,
-		epsilon:                float32(initialEpsilon),
-		decayDuration:          decayDuration,
-		EpsilonValueCalculator: calc,
-		timer: &realTimer{},
-		quit:  make(chan bool),
+		epsilon:                float32(options.InitialEpsilon),
+		decayDuration:          options.DecayDuration,
+		EpsilonValueCalculator: options.Calc,
+		epsilonBuckets:         options.EpsilonBuckets,
+		minEpsilon:             options.MinEpsilon,
+		timer:                  &realTimer{},
+		quit:                   make(chan bool),
 	}
 
 	// allocate structures
 	for _, h := range p.hostList {
-		h.epsilonCounts = make([]int64, epsilonBuckets)
-		h.epsilonValues = make([]int64, epsilonBuckets)
+		h.epsilonCounts = make([]int64, p.epsilonBuckets)
+		h.epsilonValues = make([]int64, p.epsilonBuckets)
 	}
 	go p.epsilonGreedyDecay()
 	return p
@@ -81,14 +119,15 @@ func (p *epsilonGreedyHostPool) SetHosts(hosts []string) {
 	p.Lock()
 	defer p.Unlock()
 	p.standardHostPool.setHosts(hosts)
+
 	for _, h := range p.hostList {
-		h.epsilonCounts = make([]int64, epsilonBuckets)
-		h.epsilonValues = make([]int64, epsilonBuckets)
+		h.epsilonCounts = make([]int64, p.epsilonBuckets)
+		h.epsilonValues = make([]int64, p.epsilonBuckets)
 	}
 }
 
 func (p *epsilonGreedyHostPool) epsilonGreedyDecay() {
-	durationPerBucket := p.decayDuration / epsilonBuckets
+	durationPerBucket := p.decayDuration / time.Duration(p.epsilonBuckets)
 	ticker := time.NewTicker(durationPerBucket)
 	for {
 		select {
@@ -104,7 +143,7 @@ func (p *epsilonGreedyHostPool) performEpsilonGreedyDecay() {
 	p.Lock()
 	for _, h := range p.hostList {
 		h.epsilonIndex += 1
-		h.epsilonIndex = h.epsilonIndex % epsilonBuckets
+		h.epsilonIndex = h.epsilonIndex % p.epsilonBuckets
 		h.epsilonCounts[h.epsilonIndex] = 0
 		h.epsilonValues[h.epsilonIndex] = 0
 	}
@@ -131,9 +170,9 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
 
 	// this is our exploration phase
 	if rand.Float32() < p.epsilon {
-		p.epsilon = p.epsilon * epsilonDecay
-		if p.epsilon < minEpsilon {
-			p.epsilon = minEpsilon
+		p.epsilon = p.epsilon * p.epsilonDecay
+		if p.epsilon < p.minEpsilon {
+			p.epsilon = p.minEpsilon
 		}
 		return p.getRoundRobin()
 	}

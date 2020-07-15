@@ -44,12 +44,14 @@ func (h *hostEntry) getWeightedAverageResponseTime() float64 {
 	var value float64
 	var lastValue float64
 
+	buckets := len(h.epsilonCounts)
+
 	// start at 1 so we start with the oldest entry
-	for i := 1; i <= epsilonBuckets; i += 1 {
-		pos := (h.epsilonIndex + i) % epsilonBuckets
+	for i := 1; i <= buckets; i += 1 {
+		pos := (h.epsilonIndex + i) % buckets
 		bucketCount := h.epsilonCounts[pos]
 		// Changing the line below to what I think it should be to get the weights right
-		weight := float64(i) / float64(epsilonBuckets)
+		weight := float64(i) / float64(buckets)
 		if bucketCount > 0 {
 			currentValue := float64(h.epsilonValues[pos]) / float64(bucketCount)
 			value += currentValue * weight
