@@ -1,0 +1,94 @@
+package hostpool
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestGetWeightAverageRespnseTime(t *testing.T) {
+	t.Parallel()
+
+	tcs := [...]struct {
+		name string
+
+		entry *hostEntry
+
+		expected float64
+	}{
+		{
+			name: "zero case",
+			entry: &hostEntry{
+				epsilonCounts: []int64{},
+				epsilonValues: []int64{},
+				epsilonIndex:  0,
+			},
+
+			expected: float64(0),
+		},
+		{
+			name: "simple example",
+			entry: &hostEntry{
+				// this field tracks the number of observations in each bucket
+				epsilonCounts: []int64{1, 1, 1, 0, 0},
+				// this field tracks the sum of response times in each bucket
+				epsilonValues: []int64{1000, 1000, 1000, 0, 0},
+				// this field tracks how far through the buckets we are
+				epsilonIndex: 2,
+			},
+
+			// 5 buckets, so weights step by 0.2 each time
+			// 1000 * 0.6 + 1000 * 0.8 + 1000 * 1
+			// 600 + 800 + 1000
+			expected: float64(2400),
+		},
+		{
+			name: "simple example showing iteration order",
+			entry: &hostEntry{
+				epsilonCounts: []int64{1, 1, 1, 0, 0},
+				epsilonValues: []int64{2000, 1000, 500, 0, 0},
+				epsilonIndex:  2,
+			},
+
+			// 5 buckets, so weights step by 0.2 each time
+			// 2000 * 0.6 + 1000 * 0.8 + 500 * 1
+			// 1200 + 800 + 500
+			expected: float64(2500),
+		},
+		{
+			name: "simple example showing stepping off the end wraps around",
+			entry: &hostEntry{
+				epsilonCounts: []int64{1, 1, 1, 1, 1},
+				epsilonValues: []int64{2000, 1000, 500, 250, 125},
+				epsilonIndex:  5,
+			},
+
+			// we start at position _1_ because we've wrapped around
+			// (so the _newest_ measurement is in the 0th index)
+			// 1000 * 0.2 + 500 * 0.4 + 250 * 0.6 + 125 * 0.8 + 1 * 2000
+			// 200 + 200 + 150 + 100 + 2000
+			expected: float64(2650),
+		},
+		{
+			name: "another example showing the count + sum are averaged first",
+			entry: &hostEntry{
+				epsilonCounts: []int64{2, 4, 5, 5, 5},
+				epsilonValues: []int64{2000, 1000, 500, 250, 125},
+				epsilonIndex:  4, // newest value in index 4
+			},
+
+			// (2000 / 2) * 0.2 + (1000 / 4) * 0.4 + (500 / 5) * 0.6 + (250 / 5) * 0.8 + (125 / 5) * 1
+			// 1000 * 0.2 + 250 * 0.4 + 100 * 0.6 + 50 * 0.8 + 25 * 1
+			// 200 + 100 + 60 + 40 + 25
+			expected: float64(425),
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := tc.entry.getWeightedAverageResponseTime()
+
+			require.Equal(t, tc.expected, actual)
+		})
+	}
+}
