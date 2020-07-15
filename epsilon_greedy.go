@@ -91,6 +91,7 @@ func NewEpsilonGreedyWithOptions(options EpsilonGreedyOptions) HostPool {
 		EpsilonValueCalculator: options.Calc,
 		epsilonBuckets:         options.EpsilonBuckets,
 		minEpsilon:             options.MinEpsilon,
+		epsilonDecay:           options.EpsilonDecay,
 		timer:                  &realTimer{},
 		quit:                   make(chan bool),
 	}
