@@ -7,13 +7,14 @@ import (
 )
 
 type EpsilonGreedyOptions struct {
-	Hosts          []string
-	DecayDuration  time.Duration
-	Calc           EpsilonValueCalculator
-	InitialEpsilon float64
-	EpsilonBuckets int
-	EpsilonDecay   float32
-	MinEpsilon     float32
+	Hosts                         []string
+	DecayDuration                 time.Duration
+	Calc                          EpsilonValueCalculator
+	InitialEpsilon                float64
+	EpsilonBuckets                int
+	EpsilonDecay                  float32
+	MinEpsilon                    float32
+	IncludeHostsWithoutDatapoints bool
 }
 
 const defaultEpsilonBuckets = 120
@@ -47,6 +48,9 @@ type epsilonGreedyHostPool struct {
 	epsilonDecay float32
 	minEpsilon   float32
 
+	// when scoring hosts, return hosts without data-points yet, but scored to zero
+	includeHostsWithoutDatapoints bool
+
 	EpsilonValueCalculator // embed the epsilonValueCalculator
 	timer
 	quit chan bool
@@ -68,13 +72,14 @@ type epsilonGreedyHostPool struct {
 // We then use the supplied EpsilonValueCalculator to calculate a score from that weighted average response time.
 func NewEpsilonGreedy(hosts []string, decayDuration time.Duration, calc EpsilonValueCalculator) HostPool {
 	return NewEpsilonGreedyWithOptions(EpsilonGreedyOptions{
-		Hosts:          hosts,
-		DecayDuration:  decayDuration,
-		Calc:           calc,
-		InitialEpsilon: defaultInitialEpsilon,
-		EpsilonBuckets: defaultEpsilonBuckets,
-		EpsilonDecay:   defaultEpsilonDecay,
-		MinEpsilon:     defaultMinEpsilon,
+		Hosts:                         hosts,
+		DecayDuration:                 decayDuration,
+		Calc:                          calc,
+		InitialEpsilon:                defaultInitialEpsilon,
+		EpsilonBuckets:                defaultEpsilonBuckets,
+		EpsilonDecay:                  defaultEpsilonDecay,
+		MinEpsilon:                    defaultMinEpsilon,
+		IncludeHostsWithoutDatapoints: false,
 	})
 }
 
@@ -85,15 +90,16 @@ func NewEpsilonGreedyWithOptions(options EpsilonGreedyOptions) HostPool {
 
 	stdHP := New(options.Hosts).(*standardHostPool)
 	p := &epsilonGreedyHostPool{
-		standardHostPool:       *stdHP,
-		epsilon:                float32(options.InitialEpsilon),
-		decayDuration:          options.DecayDuration,
-		EpsilonValueCalculator: options.Calc,
-		epsilonBuckets:         options.EpsilonBuckets,
-		minEpsilon:             options.MinEpsilon,
-		epsilonDecay:           options.EpsilonDecay,
-		timer:                  &realTimer{},
-		quit:                   make(chan bool),
+		standardHostPool:              *stdHP,
+		epsilon:                       float32(options.InitialEpsilon),
+		decayDuration:                 options.DecayDuration,
+		EpsilonValueCalculator:        options.Calc,
+		epsilonBuckets:                options.EpsilonBuckets,
+		minEpsilon:                    options.MinEpsilon,
+		epsilonDecay:                  options.EpsilonDecay,
+		includeHostsWithoutDatapoints: options.IncludeHostsWithoutDatapoints,
+		timer:                         &realTimer{},
+		quit:                          make(chan bool),
 	}
 
 	// allocate structures
@@ -167,8 +173,6 @@ func (p *epsilonGreedyHostPool) Get() HostPoolResponse {
 }
 
 func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
-	var hostToUse *hostEntry
-
 	// this is our exploration phase
 	if rand.Float32() < p.epsilon {
 		p.epsilon = p.epsilon * p.epsilonDecay
@@ -178,37 +182,17 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
 		return p.getRoundRobin()
 	}
 
-	// calculate values for each host in the 0..1 range (but not ormalized)
-	var possibleHosts []*hostEntry
-	now := time.Now()
-	var sumValues float64
-	for _, h := range p.hostList {
-		if h.canTryHost(now) {
-			v := h.getWeightedAverageResponseTime()
-			if v > 0 {
-				ev := p.CalcValueFromAvgResponseTime(v)
-				h.epsilonValue = ev
-				sumValues += ev
-				possibleHosts = append(possibleHosts, h)
-			}
-		}
-	}
+	possibleHosts := p.scoreHosts()
 
-	if len(possibleHosts) != 0 {
-		// now normalize to the 0..1 range to get a percentage
-		for _, h := range possibleHosts {
-			h.epsilonPercentage = h.epsilonValue / sumValues
-		}
-
-		// do a weighted random choice among hosts
-		ceiling := 0.0
-		pickPercentage := rand.Float64()
-		for _, h := range possibleHosts {
-			ceiling += h.epsilonPercentage
-			if pickPercentage <= ceiling {
-				hostToUse = h
-				break
-			}
+	var hostToUse *hostEntry
+	// do a weighted random choice among hosts
+	ceiling := 0.0
+	pickPercentage := rand.Float64()
+	for _, h := range possibleHosts {
+		ceiling += h.epsilonPercentage
+		if pickPercentage <= ceiling {
+			hostToUse = h
+			break
 		}
 	}
 
@@ -224,6 +208,37 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
 		hostToUse.willRetryHost(p.maxRetryInterval)
 	}
 	return hostToUse.host
+}
+
+func (p *epsilonGreedyHostPool) scoreHosts() []*hostEntry {
+	// calculate values for each host in the 0..1 range (but not normalized)
+	var possibleHosts []*hostEntry
+	now := time.Now()
+	var sumValues float64
+	for _, h := range p.hostList {
+		if h.canTryHost(now) {
+			v := h.getWeightedAverageResponseTime()
+			if v > 0 {
+				ev := p.CalcValueFromAvgResponseTime(v)
+				h.epsilonValue = ev
+				sumValues += ev
+				possibleHosts = append(possibleHosts, h)
+			} else {
+				// weighted response time is zero (or negative?) - but sometimes
+				// we will want to select these hosts anyway (e.g. when exploring)
+				if p.includeHostsWithoutDatapoints {
+					possibleHosts = append(possibleHosts, h)
+				}
+			}
+		}
+	}
+
+	// now normalize to the 0..1 range to get a percentage
+	for _, h := range possibleHosts {
+		h.epsilonPercentage = h.epsilonValue / sumValues
+	}
+
+	return possibleHosts
 }
 
 func (p *epsilonGreedyHostPool) markSuccess(hostR HostPoolResponse) {
