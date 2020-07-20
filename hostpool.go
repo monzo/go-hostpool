@@ -63,6 +63,9 @@ type standardHostPool struct {
 	initialRetryDelay time.Duration
 	maxRetryInterval  time.Duration
 	nextHostIndex     int
+	// Error budget config
+	maxFailures   int
+	failureWindow time.Duration
 }
 
 // Construct a basic HostPool using the hostnames provided
@@ -163,6 +166,20 @@ func (p *standardHostPool) SetHosts(hosts []string) {
 	p.setHosts(hosts)
 }
 
+func (p *standardHostPool) SetErrorBudget(maxFailures int, failureWindow time.Duration) {
+	p.Lock()
+	defer p.Unlock()
+
+	p.maxFailures = maxFailures
+	p.failureWindow = failureWindow
+
+	// hosts and hostList are pointers to the same hostEntry so we only need update one.
+	for _, h := range p.hostList {
+		// We test for failures > maxFailures, so need an extra ringbuffer slot.
+		h.failures = NewRingBuffer(p.maxFailures + 1)
+	}
+}
+
 func (p *standardHostPool) ReturnUnhealthy(v bool) {
 	p.Lock()
 	defer p.Unlock()
@@ -214,18 +231,26 @@ func (p *standardHostPool) markFailed(hostR HostPoolResponse) {
 	host := hostR.Host()
 	p.Lock()
 	defer p.Unlock()
+
 	h, ok := p.hosts[host]
 	if !ok {
 		log.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 	if !h.dead {
-		h.dead = true
-		h.retryCount = 0
-		h.retryDelay = p.initialRetryDelay
-		h.nextRetry = time.Now().Add(h.retryDelay)
+		if h.failures != nil {
+			ts := time.Now()
+			h.failures.insert(ts)
+			if h.failures.since(ts.Add(-p.failureWindow)) > p.maxFailures {
+				log.Printf("host %s exceeded %d failures in %s", h.host, p.maxFailures, p.failureWindow)
+				h.markDead(p.initialRetryDelay)
+			}
+		} else {
+			h.markDead(p.initialRetryDelay)
+		}
 	}
 
 }
+
 func (p *standardHostPool) Hosts() []string {
 	hosts := make([]string, 0, len(p.hosts))
 	for host := range p.hosts {

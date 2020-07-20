@@ -17,6 +17,7 @@ type hostEntry struct {
 	epsilonIndex      int
 	epsilonValue      float64
 	epsilonPercentage float64
+	failures          *ringBuffer
 }
 
 func (h *hostEntry) canTryHost(now time.Time) bool {
@@ -60,4 +61,11 @@ func (h *hostEntry) getWeightedAverageResponseTime() float64 {
 		}
 	}
 	return value
+}
+
+func (h *hostEntry) markDead(initialRetryDelay time.Duration) {
+	h.dead = true
+	h.retryCount = 0
+	h.retryDelay = initialRetryDelay
+	h.nextRetry = time.Now().Add(h.retryDelay)
 }
