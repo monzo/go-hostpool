@@ -4,7 +4,6 @@ import (
 	"time"
 )
 
-
 type ringBuffer struct {
 	size  int
 	index int
@@ -13,7 +12,7 @@ type ringBuffer struct {
 
 func NewRingBuffer(size int) *ringBuffer {
 	return &ringBuffer{
-		size: size,
+		size:  size,
 		items: make([]time.Time, size),
 	}
 }

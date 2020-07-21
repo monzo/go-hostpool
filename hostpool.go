@@ -57,16 +57,32 @@ type HostPool interface {
 
 type standardHostPool struct {
 	sync.RWMutex
-	hosts             map[string]*hostEntry
-	hostList          []*hostEntry
-	returnUnhealthy   bool
+	hosts           map[string]*hostEntry
+	hostList        []*hostEntry
+	returnUnhealthy bool
+	nextHostIndex   int
+	// Host retry parameters
 	initialRetryDelay time.Duration
 	maxRetryInterval  time.Duration
-	nextHostIndex     int
 	// Error budget config
 	maxFailures   int
 	failureWindow time.Duration
 }
+
+type StandardHostPoolOptions struct {
+	// Host retry parameters
+	InitialRetryDelay time.Duration
+	MaxRetryInterval  time.Duration
+	// Error budget config
+	MaxFailures   int
+	FailureWindow time.Duration
+}
+
+// ------ constants -------------------
+
+const initialRetryDelay = time.Duration(30) * time.Second
+const maxRetryInterval = time.Duration(900) * time.Second
+const defaultFailureWindow = time.Duration(60) * time.Second
 
 // Construct a basic HostPool using the hostnames provided
 func New(hosts []string) HostPool {
@@ -74,14 +90,53 @@ func New(hosts []string) HostPool {
 		returnUnhealthy:   true,
 		hosts:             make(map[string]*hostEntry, len(hosts)),
 		hostList:          make([]*hostEntry, len(hosts)),
-		initialRetryDelay: time.Duration(30) * time.Second,
-		maxRetryInterval:  time.Duration(900) * time.Second,
+		initialRetryDelay: initialRetryDelay,
+		maxRetryInterval:  maxRetryInterval,
 	}
 
 	for i, h := range hosts {
 		e := &hostEntry{
 			host:       h,
 			retryDelay: p.initialRetryDelay,
+		}
+		p.hosts[h] = e
+		p.hostList[i] = e
+	}
+
+	return p
+}
+
+func NewWithOptions(hosts []string, options StandardHostPoolOptions) HostPool {
+	// Initialise with defaults, override from options
+	p := &standardHostPool{
+		returnUnhealthy:   true,
+		hosts:             make(map[string]*hostEntry, len(hosts)),
+		hostList:          make([]*hostEntry, len(hosts)),
+		initialRetryDelay: initialRetryDelay,
+		maxRetryInterval:  maxRetryInterval,
+		failureWindow:     defaultFailureWindow,
+	}
+
+	if options.InitialRetryDelay > 0 {
+		p.initialRetryDelay = options.InitialRetryDelay
+	}
+	if options.MaxRetryInterval > 0 {
+		p.maxRetryInterval = options.MaxRetryInterval
+	}
+	if options.MaxFailures > 0 {
+		p.maxFailures = options.MaxFailures
+	}
+	if options.FailureWindow > 0 {
+		p.failureWindow = options.FailureWindow
+	}
+
+	for i, h := range hosts {
+		e := &hostEntry{
+			host:       h,
+			retryDelay: p.initialRetryDelay,
+		}
+		if p.maxFailures > 0 {
+			e.failures = NewRingBuffer(p.maxFailures + 1)
 		}
 		p.hosts[h] = e
 		p.hostList[i] = e
@@ -166,20 +221,6 @@ func (p *standardHostPool) SetHosts(hosts []string) {
 	p.setHosts(hosts)
 }
 
-func (p *standardHostPool) SetErrorBudget(maxFailures int, failureWindow time.Duration) {
-	p.Lock()
-	defer p.Unlock()
-
-	p.maxFailures = maxFailures
-	p.failureWindow = failureWindow
-
-	// hosts and hostList are pointers to the same hostEntry so we only need update one.
-	for _, h := range p.hostList {
-		// We test for failures > maxFailures, so need an extra ringbuffer slot.
-		h.failures = NewRingBuffer(p.maxFailures + 1)
-	}
-}
-
 func (p *standardHostPool) ReturnUnhealthy(v bool) {
 	p.Lock()
 	defer p.Unlock()
@@ -194,6 +235,9 @@ func (p *standardHostPool) setHosts(hosts []string) {
 		e := &hostEntry{
 			host:       h,
 			retryDelay: p.initialRetryDelay,
+		}
+		if p.maxFailures > 0 {
+			e.failures = NewRingBuffer(p.maxFailures + 1)
 		}
 		p.hosts[h] = e
 		p.hostList[i] = e

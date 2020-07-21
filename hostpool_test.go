@@ -181,25 +181,9 @@ func TestHostPoolErrorBudget(t *testing.T) {
 
 	dummyErr := errors.New("Dummy Error")
 
-	hosts := []string{"a", "b"}
-	p := &standardHostPool{
-		returnUnhealthy:   true,
-		hosts:             make(map[string]*hostEntry, len(hosts)),
-		hostList:          make([]*hostEntry, len(hosts)),
-		initialRetryDelay: time.Duration(30) * time.Second,
-		maxRetryInterval:  time.Duration(900) * time.Second,
-	}
-
-	for i, h := range hosts {
-		e := &hostEntry{
-			host:       h,
-			retryDelay: p.initialRetryDelay,
-		}
-		p.hosts[h] = e
-		p.hostList[i] = e
-	}
-
-	p.SetErrorBudget(2, time.Minute)
+	p := NewWithOptions([]string{"a", "b"}, StandardHostPoolOptions{
+		MaxFailures: 2,
+	})
 
 	// Initially both hosts are available.
 	assert.Equal(t, p.Get().Host(), "a")
