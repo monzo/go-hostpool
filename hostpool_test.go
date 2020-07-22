@@ -183,6 +183,7 @@ func TestHostPoolErrorBudget(t *testing.T) {
 
 	p := NewWithOptions([]string{"a", "b"}, StandardHostPoolOptions{
 		MaxFailures: 2,
+		FailureWindow: 60 * time.Second,
 	})
 
 	// Initially both hosts are available.
