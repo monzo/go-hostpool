@@ -174,3 +174,77 @@ func BenchmarkEpsilonGreedyManyHosts(b *testing.B) {
 		hostR.Mark(nil)
 	}
 }
+
+func TestHostPoolErrorBudget(t *testing.T) {
+	log.SetOutput(ioutil.Discard)
+	defer log.SetOutput(os.Stdout)
+
+	dummyErr := errors.New("Dummy Error")
+
+	p := NewWithOptions([]string{"a", "b"}, StandardHostPoolOptions{
+		MaxFailures: 2,
+		FailureWindow: 60 * time.Second,
+	})
+
+	// Initially both hosts are available.
+	assert.Equal(t, p.Get().Host(), "a")
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// Mark an error against a.
+	respA := p.Get()
+	assert.Equal(t, respA.Host(), "a")
+	respA.Mark(dummyErr)
+
+	assert.Equal(t, p.Get().Host(), "b")
+	// a should still be available (second failure)
+	respA = p.Get()
+	assert.Equal(t, respA.Host(), "a")
+	respA.Mark(dummyErr)
+
+	assert.Equal(t, p.Get().Host(), "b")
+
+	respA = p.Get()
+	// a should be marked as down (third failure)
+	assert.Equal(t, respA.Host(), "a")
+	respA.Mark(dummyErr)
+
+	// Host a should not be available.
+	assert.Equal(t, p.Get().Host(), "b")
+}
+
+func TestHostPoolErrorBudgetReset(t *testing.T) {
+	log.SetOutput(ioutil.Discard)
+	defer log.SetOutput(os.Stdout)
+
+	dummyErr := errors.New("Dummy Error")
+
+	p := NewWithOptions([]string{"a", "b"}, StandardHostPoolOptions{
+		MaxFailures:       1,
+		FailureWindow:     1 * time.Second,
+	})
+
+	// Initially both hosts are available
+	assert.Equal(t, p.Get().Host(), "a")
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// Mark an error against a
+	respA := p.Get()
+	assert.Equal(t, respA.Host(), "a")
+	respA.Mark(dummyErr)
+
+	// Fetch next host
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// Ensure failure window is exceeded
+	time.Sleep(time.Second * 2)
+
+	// Mark another error
+	respA = p.Get()
+	assert.Equal(t, respA.Host(), "a")
+	respA.Mark(dummyErr)
+
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// a should still be available
+	assert.Equal(t, p.Get().Host(), "a")
+}
