@@ -18,8 +18,8 @@ func NewRingBuffer(size int) *ringBuffer {
 }
 
 func (r *ringBuffer) insert(ts time.Time) {
-	r.index = (r.index + 1) % r.size
 	r.items[r.index] = ts
+	r.index = (r.index + 1) % r.size
 }
 
 // Since we have time.Time values, we can make use of the zero value to filter the whole buffer.

@@ -28,5 +28,5 @@ func TestErrorBudgetInsert(t *testing.T) {
 		rb.insert(lastInsert)
 	}
 
-	assert.Equal(t, lastInsert, rb.items[rb.index])
+	assert.Equal(t, lastInsert, rb.items[rb.index-1])
 }

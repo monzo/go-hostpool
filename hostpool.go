@@ -136,6 +136,7 @@ func NewWithOptions(hosts []string, options StandardHostPoolOptions) HostPool {
 			retryDelay: p.initialRetryDelay,
 		}
 		if p.maxFailures > 0 {
+			// We test for failures > maxFailures, so need an extra slot in the buffer.
 			e.failures = NewRingBuffer(p.maxFailures + 1)
 		}
 		p.hosts[h] = e
@@ -237,6 +238,7 @@ func (p *standardHostPool) setHosts(hosts []string) {
 			retryDelay: p.initialRetryDelay,
 		}
 		if p.maxFailures > 0 {
+			// We test for failures > maxFailures, so need an extra slot in the buffer.
 			e.failures = NewRingBuffer(p.maxFailures + 1)
 		}
 		p.hosts[h] = e
