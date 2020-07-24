@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bmizerany/assert"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHostPool(t *testing.T) {
@@ -182,7 +182,7 @@ func TestHostPoolErrorBudget(t *testing.T) {
 	dummyErr := errors.New("Dummy Error")
 
 	p := NewWithOptions([]string{"a", "b"}, StandardHostPoolOptions{
-		MaxFailures: 2,
+		MaxFailures:   2,
 		FailureWindow: 60 * time.Second,
 	})
 
@@ -219,8 +219,8 @@ func TestHostPoolErrorBudgetReset(t *testing.T) {
 	dummyErr := errors.New("Dummy Error")
 
 	p := NewWithOptions([]string{"a", "b"}, StandardHostPoolOptions{
-		MaxFailures:       1,
-		FailureWindow:     1 * time.Second,
+		MaxFailures:   1,
+		FailureWindow: 1 * time.Second,
 	})
 
 	// Initially both hosts are available
