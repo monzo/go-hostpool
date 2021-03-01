@@ -116,19 +116,20 @@ func (p *epsilonGreedyHostPool) performEpsilonGreedyDecay() {
 func (p *epsilonGreedyHostPool) Get() HostPoolResponse {
 	p.Lock()
 	defer p.Unlock()
-	host := p.getEpsilonGreedy()
+
+	now := time.Now()
+	host := p.getEpsilonGreedy(now)
 	if host == "" {
 		return nil
 	}
 
-	started := time.Now()
 	return &epsilonHostPoolResponse{
 		standardHostPoolResponse: standardHostPoolResponse{host: host, pool: p},
-		started:                  started,
+		started:                  now,
 	}
 }
 
-func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
+func (p *epsilonGreedyHostPool) getEpsilonGreedy(now time.Time) string {
 	var hostToUse *hostEntry
 
 	// this is our exploration phase
@@ -147,7 +148,6 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
 		candidateScores       = make([]float64, 0, 256)
 	)
 
-	now := time.Now()
 	for _, h := range p.hostList {
 		if !h.canTryHost(now) {
 			continue
