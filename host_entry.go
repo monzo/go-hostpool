@@ -59,14 +59,17 @@ func (h *hostEntry) getWeightedAverageResponseTime() float64 {
 
 func (h *hostEntry) epsilonDecay() {
 	// Move to the next position in the ring
-	buckets := len(h.epsilonCounts)
-	h.epsilonIndex = (h.epsilonIndex + 1) % buckets
+	h.epsilonIndex = (h.epsilonIndex + 1) % len(h.epsilonCounts)
 	h.epsilonCounts[h.epsilonIndex] = 0
 	h.epsilonValues[h.epsilonIndex] = 0
+	h.calculateWeightedAverages()
+}
 
+func (h *hostEntry) calculateWeightedAverages() {
 	// We start with the oldest entry in the ring and move forward, coming up to
 	// the most recent entry (but not the current one which is when i = 0
 	// resulting in pos pointing to the current bucket index)
+	buckets := len(h.epsilonCounts)
 	var total, lastValue float64
 	for i := 1; i < buckets; i++ {
 		pos := (h.epsilonIndex + i) % buckets
