@@ -147,7 +147,7 @@ func BenchmarkEpsilonGreedy(b *testing.B) {
 }
 
 func BenchmarkEpsilonGreedyManyHosts(topB *testing.B) {
-	bench := func(hostCount int) func(*testing.B) {
+	bench := func(hostCount int, enableDecay bool) func(*testing.B) {
 		return func(b *testing.B) {
 			b.StopTimer()
 
@@ -167,7 +167,7 @@ func BenchmarkEpsilonGreedyManyHosts(topB *testing.B) {
 
 			b.StartTimer()
 			for i := 0; i < b.N; i++ {
-				if i != 0 && i%100 == 0 {
+				if enableDecay && i != 0 && i%100 == 0 {
 					p.performEpsilonGreedyDecay()
 				}
 				hostR := p.Get()
@@ -177,11 +177,17 @@ func BenchmarkEpsilonGreedyManyHosts(topB *testing.B) {
 		}
 	}
 
-	topB.Run("Hosts10", bench(10))
-	topB.Run("Hosts25", bench(25))
-	topB.Run("Hosts50", bench(50))
-	topB.Run("Hosts100", bench(100))
-	topB.Run("Hosts250", bench(250))
+	topB.Run("Hosts10/NoDecay", bench(10, false))
+	topB.Run("Hosts25/NoDecay", bench(25, false))
+	topB.Run("Hosts50/NoDecay", bench(50, false))
+	topB.Run("Hosts100/NoDecay", bench(100, false))
+	topB.Run("Hosts250/NoDecay", bench(250, false))
+
+	topB.Run("Hosts10/WithDecay", bench(10, true))
+	topB.Run("Hosts25/WithDecay", bench(25, true))
+	topB.Run("Hosts50/WithDecay", bench(50, true))
+	topB.Run("Hosts100/WithDecay", bench(100, true))
+	topB.Run("Hosts250/WithDecay", bench(250, true))
 }
 
 func TestHostPoolErrorBudget(t *testing.T) {
