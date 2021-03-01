@@ -108,10 +108,7 @@ func (p *epsilonGreedyHostPool) epsilonGreedyDecay() {
 func (p *epsilonGreedyHostPool) performEpsilonGreedyDecay() {
 	p.Lock()
 	for _, h := range p.hostList {
-		h.epsilonIndex += 1
-		h.epsilonIndex = h.epsilonIndex % epsilonBuckets
-		h.epsilonCounts[h.epsilonIndex] = 0
-		h.epsilonValues[h.epsilonIndex] = 0
+		h.epsilonDecay()
 	}
 	p.Unlock()
 }
@@ -119,19 +116,20 @@ func (p *epsilonGreedyHostPool) performEpsilonGreedyDecay() {
 func (p *epsilonGreedyHostPool) Get() HostPoolResponse {
 	p.Lock()
 	defer p.Unlock()
-	host := p.getEpsilonGreedy()
+
+	now := time.Now()
+	host := p.getEpsilonGreedy(now)
 	if host == "" {
 		return nil
 	}
 
-	started := time.Now()
 	return &epsilonHostPoolResponse{
 		standardHostPoolResponse: standardHostPoolResponse{host: host, pool: p},
-		started:                  started,
+		started:                  now,
 	}
 }
 
-func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
+func (p *epsilonGreedyHostPool) getEpsilonGreedy(now time.Time) string {
 	var hostToUse *hostEntry
 
 	// this is our exploration phase
@@ -143,45 +141,54 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy() string {
 		return p.getRoundRobin()
 	}
 
-	// calculate values for each host in the 0..1 range (but not ormalized)
-	var possibleHosts []*hostEntry
-	now := time.Now()
-	var sumValues float64
+	// here we are exploiting
+	var (
+		totalScore            float64
+		candidateEpsilonHosts = make([]*hostEntry, 0, 256)
+		candidateScores       = make([]float64, 0, 256)
+	)
+
 	for _, h := range p.hostList {
-		if h.canTryHost(now) {
-			v := h.getWeightedAverageResponseTime()
-			if v > 0 {
-				ev := p.CalcValueFromAvgResponseTime(v)
-				h.epsilonValue = ev
-				sumValues += ev
-				possibleHosts = append(possibleHosts, h)
-			}
+		if !h.canTryHost(now) {
+			continue
 		}
+
+		hostResponseTime := h.getWeightedAverageResponseTime()
+		if hostResponseTime <= 0 {
+			continue
+		}
+
+		score := p.CalcValueFromAvgResponseTime(hostResponseTime)
+		candidateEpsilonHosts = append(candidateEpsilonHosts, h)
+		candidateScores = append(candidateScores, score)
+		totalScore += score
 	}
 
-	if len(possibleHosts) != 0 {
-		// now normalize to the 0..1 range to get a percentage
-		for _, h := range possibleHosts {
-			h.epsilonPercentage = h.epsilonValue / sumValues
-		}
+	if len(candidateEpsilonHosts) == 0 {
+		return p.getRoundRobin()
+	}
 
-		// do a weighted random choice among hosts
-		ceiling := 0.0
-		pickPercentage := rand.Float64()
-		for _, h := range possibleHosts {
-			ceiling += h.epsilonPercentage
-			if pickPercentage <= ceiling {
-				hostToUse = h
-				break
-			}
+	// This is the threshold we need to meet and the threshold we've met so
+	// far. The goal is to keep accumulating our scores until we pass the
+	// threshold value
+	var (
+		thresholdScore   = rand.Float64() * totalScore
+		accumulatedScore = 0.0
+	)
+
+	for idx, host := range candidateEpsilonHosts {
+		score := candidateScores[idx]
+		accumulatedScore += score
+		if accumulatedScore >= thresholdScore {
+			hostToUse = host
+			break
 		}
 	}
 
 	if hostToUse == nil {
-		if len(possibleHosts) != 0 {
+		if len(candidateEpsilonHosts) != 0 {
 			log.Println("Failed to randomly choose a host, Dan loses")
 		}
-
 		return p.getRoundRobin()
 	}
 

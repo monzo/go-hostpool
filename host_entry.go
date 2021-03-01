@@ -7,17 +7,18 @@ import (
 // --- hostEntry - this is due to get upgraded
 
 type hostEntry struct {
-	host              string
-	nextRetry         time.Time
-	retryCount        int16
-	retryDelay        time.Duration
-	dead              bool
-	epsilonCounts     []int64
-	epsilonValues     []int64
-	epsilonIndex      int
-	epsilonValue      float64
-	epsilonPercentage float64
-	failures          *ringBuffer
+	host       string
+	nextRetry  time.Time
+	retryCount int16
+	retryDelay time.Duration
+	dead       bool
+	failures   *ringBuffer
+
+	epsilonCounts          []int64 // ring of counts observed
+	epsilonValues          []int64 // ring of total time observations observed
+	epsilonIndex           int     // current index in the ring
+	epsilonWeightedTotal   float64 // The total not including the active bucket
+	epsilonWeightedLastVal float64 // The last non-zero count average
 }
 
 func (h *hostEntry) canTryHost(now time.Time) bool {
@@ -42,25 +43,52 @@ func (h *hostEntry) willRetryHost(maxRetryInterval time.Duration) {
 }
 
 func (h *hostEntry) getWeightedAverageResponseTime() float64 {
-	var value float64
-	var lastValue float64
+	currentBucketCount := h.epsilonCounts[h.epsilonIndex]
 
-	// start at 1 so we start with the oldest entry
+	// If we've not seen any observations yet, use the last value from the
+	// previous buckets
+	if currentBucketCount == 0 {
+		return h.epsilonWeightedTotal + h.epsilonWeightedLastVal
+	}
+
+	// Take our weighted total and add on the average of our current index
+	// which has a 100% weighting
+	currentAvg := float64(h.epsilonValues[h.epsilonIndex]) / float64(currentBucketCount)
+	return h.epsilonWeightedTotal + currentAvg
+}
+
+func (h *hostEntry) epsilonDecay() {
+	// Move to the next position in the ring
+	h.epsilonIndex = (h.epsilonIndex + 1) % len(h.epsilonCounts)
+	h.epsilonCounts[h.epsilonIndex] = 0
+	h.epsilonValues[h.epsilonIndex] = 0
+	h.calculateWeightedAverages()
+}
+
+func (h *hostEntry) calculateWeightedAverages() {
+	// We start with the oldest entry in the ring and move forward, coming up to
+	// the most recent entry (but not the current one which is when i = 0
+	// resulting in pos pointing to the current bucket index)
 	buckets := len(h.epsilonCounts)
-	for i := 1; i <= buckets; i += 1 {
+	var total, lastValue float64
+	for i := 1; i < buckets; i++ {
 		pos := (h.epsilonIndex + i) % buckets
 		bucketCount := h.epsilonCounts[pos]
-		// Changing the line below to what I think it should be to get the weights right
 		weight := float64(i) / float64(buckets)
-		if bucketCount > 0 {
-			currentValue := float64(h.epsilonValues[pos]) / float64(bucketCount)
-			value += currentValue * weight
-			lastValue = currentValue
+		if h.epsilonCounts[pos] > 0 {
+			// We have observed values in this bucket, so let's tally them up
+			avg := float64(h.epsilonValues[pos]) / float64(bucketCount)
+			total += avg * weight
+			lastValue = avg
 		} else {
-			value += lastValue * weight
+			// We had no values observed in this bucket, so we just use the
+			// previous bucket and carry over the weight
+			total += lastValue * weight
 		}
 	}
-	return value
+
+	h.epsilonWeightedTotal = total
+	h.epsilonWeightedLastVal = lastValue
 }
 
 func (h *hostEntry) markDead(initialRetryDelay time.Duration) {
