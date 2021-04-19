@@ -1,5 +1,5 @@
-module github.com/bitly/go-hostpool
+module github.com/hailocab/go-hostpool
 
 go 1.15
 
-require github.com/stretchr/testify v1.5.1
+require github.com/stretchr/testify v1.7.0
