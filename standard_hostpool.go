@@ -1,6 +1,7 @@
 package hostpool
 
 import (
+	"log"
 	"sync"
 	"time"
 )
@@ -46,8 +47,9 @@ type standardHostPool struct {
 	initialRetryDelay time.Duration
 	maxRetryInterval  time.Duration
 	// Error budget config
-	maxFailures   int
-	failureWindow time.Duration
+	maxFailures       int
+	maxFailurePercent float64
+	failureWindow     time.Duration
 }
 
 type StandardHostPoolOptions struct {
@@ -56,8 +58,9 @@ type StandardHostPoolOptions struct {
 	InitialRetryDelay time.Duration
 	MaxRetryInterval  time.Duration
 	// Error budget config
-	MaxFailures   int
-	FailureWindow time.Duration
+	MaxFailures       int
+	MaxFailurePercent float64
+	FailureWindow     time.Duration
 }
 
 // ------ constants -------------------
@@ -65,6 +68,7 @@ type StandardHostPoolOptions struct {
 const initialRetryDelay = time.Duration(30) * time.Second
 const maxRetryInterval = time.Duration(900) * time.Second
 const defaultFailureWindow = time.Duration(60) * time.Second
+const defaultMaxFailurePercent = 101.0
 
 // Construct a basic HostPool using the hostnames provided
 func New(hosts []string) HostPool {
@@ -98,6 +102,7 @@ func NewWithOptions(hosts []string, options StandardHostPoolOptions) HostPool {
 		logger:            DefaultLogger{},
 		initialRetryDelay: initialRetryDelay,
 		maxRetryInterval:  maxRetryInterval,
+		maxFailurePercent: defaultMaxFailurePercent,
 		failureWindow:     defaultFailureWindow,
 	}
 
@@ -113,6 +118,9 @@ func NewWithOptions(hosts []string, options StandardHostPoolOptions) HostPool {
 	if options.MaxFailures > 0 {
 		p.maxFailures = options.MaxFailures
 	}
+	if options.MaxFailurePercent > 0 {
+		p.maxFailurePercent = options.MaxFailurePercent
+	}
 	if options.FailureWindow > 0 {
 		p.failureWindow = options.FailureWindow
 	}
@@ -125,6 +133,7 @@ func NewWithOptions(hosts []string, options StandardHostPoolOptions) HostPool {
 		if p.maxFailures > 0 {
 			// We test for failures > maxFailures, so need an extra slot in the buffer.
 			e.failures = NewRingBuffer(p.maxFailures + 1)
+			e.successes = NewRingBuffer(p.maxFailures + 1)
 		}
 		p.hosts[h] = e
 		p.hostList[i] = e
@@ -236,6 +245,7 @@ func (p *standardHostPool) markSuccess(hostR HostPoolResponse) {
 		p.logger.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 	h.dead = false
+	h.successes.insert(time.Now())
 }
 
 func (p *standardHostPool) markFailed(hostR HostPoolResponse) {
@@ -251,9 +261,20 @@ func (p *standardHostPool) markFailed(hostR HostPoolResponse) {
 		if h.failures != nil {
 			ts := time.Now()
 			h.failures.insert(ts)
-			if h.failures.since(ts.Add(-p.failureWindow)) > p.maxFailures {
+			failureLookback := -p.failureWindow
+			failuresInWindow := h.failures.since(ts.Add(failureLookback))
+			if failuresInWindow > p.maxFailures {
 				p.logger.Printf("host %s exceeded %d failures in %s", h.host, p.maxFailures, p.failureWindow)
 				h.markDead(p.initialRetryDelay)
+				return
+			}
+
+			successesInWindow := h.successes.since(ts.Add(failureLookback))
+			failurePercent := (float64(failuresInWindow) / float64(failuresInWindow+successesInWindow)) * 100
+			if failurePercent >= p.maxFailurePercent {
+				log.Printf("host %s exceeded %f%% failure percent in %s", h.host, p.maxFailurePercent, p.failureWindow)
+				h.markDead(p.initialRetryDelay)
+				return
 			}
 		} else {
 			h.markDead(p.initialRetryDelay)

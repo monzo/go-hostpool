@@ -13,6 +13,7 @@ type hostEntry struct {
 	retryDelay time.Duration
 	dead       bool
 	failures   *ringBuffer
+	successes  *ringBuffer
 
 	epsilonCounts          []int64 // ring of counts observed
 	epsilonValues          []int64 // ring of total time observations observed
