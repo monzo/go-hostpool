@@ -245,7 +245,9 @@ func (p *standardHostPool) markSuccess(hostR HostPoolResponse) {
 		p.logger.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 	h.dead = false
-	h.successes.insert(time.Now())
+	if h.successes != nil {
+		h.successes.insert(time.Now())
+	}
 }
 
 func (p *standardHostPool) markFailed(hostR HostPoolResponse) {
@@ -271,7 +273,7 @@ func (p *standardHostPool) markFailed(hostR HostPoolResponse) {
 
 			successesInWindow := h.successes.since(ts.Add(failureLookback))
 			failurePercent := (float64(failuresInWindow) / float64(failuresInWindow+successesInWindow)) * 100
-			if failurePercent >= p.maxFailurePercent {
+			if failurePercent >= p.maxFailurePercent && successesInWindow > 0 {
 				log.Printf("host %s exceeded %f%% failure percent in %s", h.host, p.maxFailurePercent, p.failureWindow)
 				h.markDead(p.initialRetryDelay)
 				return
