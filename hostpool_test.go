@@ -227,6 +227,59 @@ func TestHostPoolErrorBudget(t *testing.T) {
 	assert.Equal(t, p.Get().Host(), "b")
 }
 
+func TestHostPoolErrorPercentageBudget(t *testing.T) {
+	log.SetOutput(ioutil.Discard)
+	defer log.SetOutput(os.Stdout)
+
+	dummyErr := errors.New("Dummy Error")
+
+	hpOptions := StandardHostPoolOptions{
+		MaxFailures:       100,
+		MaxFailurePercent: 50,
+		FailureWindow:     60 * time.Second,
+	}
+	p := NewWithOptions([]string{"a", "b"}, hpOptions)
+
+	// Initially both hosts are available.
+	assert.Equal(t, p.Get().Host(), "a")
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// Mark 10 successes against a & b.
+	for i := 0; i < 10; i++ {
+		p.Get().Mark(nil)
+		p.Get().Mark(nil)
+	}
+
+	// a should still be avaliable (no failures)
+	assert.Equal(t, p.Get().Host(), "a")
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// Mark 10 failures against a.
+	for i := 0; i < 10; i++ {
+		p.Get().Mark(dummyErr)
+		p.Get().Mark(nil)
+	}
+
+	// Only b should be returned
+	assert.Equal(t, p.Get().Host(), "b")
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// create a new hostpool with empty ringbuffers
+	p = NewWithOptions([]string{"a", "b"}, hpOptions)
+
+	// Initially both hosts are available.
+	assert.Equal(t, p.Get().Host(), "a")
+	assert.Equal(t, p.Get().Host(), "b")
+
+	// Single error against a
+	p.Get().Mark(dummyErr)
+	p.Get().Mark(nil)
+
+	// Both hosts still avaliable
+	assert.Equal(t, p.Get().Host(), "a")
+	assert.Equal(t, p.Get().Host(), "b")
+}
+
 func TestHostPoolErrorBudgetReset(t *testing.T) {
 	log.SetOutput(ioutil.Discard)
 	defer log.SetOutput(os.Stdout)
