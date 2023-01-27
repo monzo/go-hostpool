@@ -273,6 +273,7 @@ func (p *standardHostPool) markFailed(hostR HostPoolResponse) {
 
 			successesInWindow := h.successes.since(ts.Add(failureLookback))
 			failurePercent := (float64(failuresInWindow) / float64(failuresInWindow+successesInWindow)) * 100
+			// Check that we've had at least one success, otherwise a single error would mark a host as down
 			if failurePercent >= p.maxFailurePercent && successesInWindow > 0 {
 				log.Printf("host %s exceeded %f%% failure percent in %s", h.host, p.maxFailurePercent, p.failureWindow)
 				h.markDead(p.initialRetryDelay)
