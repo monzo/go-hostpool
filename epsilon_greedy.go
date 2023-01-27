@@ -1,7 +1,6 @@
 package hostpool
 
 import (
-	"log"
 	"math/rand"
 	"time"
 )
@@ -26,7 +25,8 @@ func (r *epsilonHostPoolResponse) Mark(err error) {
 }
 
 type epsilonGreedyHostPool struct {
-	standardHostPool               // TODO - would be nifty if we could embed HostPool and Locker interfaces
+	standardHostPool       // TODO - would be nifty if we could embed HostPool and Locker interfaces
+	logger                 Logger
 	epsilon                float32 // this is our exploration factor
 	decayDuration          time.Duration
 	EpsilonValueCalculator // embed the epsilonValueCalculator
@@ -54,6 +54,7 @@ func NewEpsilonGreedy(hosts []string, decayDuration time.Duration, calc EpsilonV
 	}
 	stdHP := New(hosts).(*standardHostPool)
 	p := &epsilonGreedyHostPool{
+		logger:                 DefaultLogger{},
 		standardHostPool:       *stdHP,
 		epsilon:                float32(initialEpsilon),
 		decayDuration:          decayDuration,
@@ -90,6 +91,10 @@ func (p *epsilonGreedyHostPool) SetHosts(hosts []string) {
 		h.epsilonCounts = make([]int64, epsilonBuckets)
 		h.epsilonValues = make([]int64, epsilonBuckets)
 	}
+}
+
+func (p *epsilonGreedyHostPool) SetLogger(l Logger) {
+	p.logger = l
 }
 
 func (p *epsilonGreedyHostPool) epsilonGreedyDecay() {
@@ -187,7 +192,7 @@ func (p *epsilonGreedyHostPool) getEpsilonGreedy(now time.Time) string {
 
 	if hostToUse == nil {
 		if len(candidateEpsilonHosts) != 0 {
-			log.Println("Failed to randomly choose a host, Dan loses")
+			p.logger.Println("Failed to randomly choose a host, Dan loses")
 		}
 		return p.getRoundRobin()
 	}
@@ -203,7 +208,7 @@ func (p *epsilonGreedyHostPool) markSuccess(hostR HostPoolResponse) {
 	p.standardHostPool.markSuccess(hostR)
 	eHostR, ok := hostR.(*epsilonHostPoolResponse)
 	if !ok {
-		log.Printf("Incorrect type in eps markSuccess!") // TODO reflection to print out offending type
+		p.logger.Printf("Incorrect type in eps markSuccess!") // TODO reflection to print out offending type
 		return
 	}
 	host := eHostR.host
@@ -213,7 +218,7 @@ func (p *epsilonGreedyHostPool) markSuccess(hostR HostPoolResponse) {
 	defer p.Unlock()
 	h, ok := p.hosts[host]
 	if !ok {
-		log.Fatalf("host %s not in HostPool %v", host, p.Hosts())
+		p.logger.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 	h.epsilonCounts[h.epsilonIndex]++
 	h.epsilonValues[h.epsilonIndex] += int64(duration.Seconds() * 1000)

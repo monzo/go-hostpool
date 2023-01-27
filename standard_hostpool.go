@@ -1,7 +1,6 @@
 package hostpool
 
 import (
-	"log"
 	"sync"
 	"time"
 )
@@ -42,6 +41,7 @@ type standardHostPool struct {
 	hostList        []*hostEntry
 	returnUnhealthy bool
 	nextHostIndex   int
+	logger          Logger
 	// Host retry parameters
 	initialRetryDelay time.Duration
 	maxRetryInterval  time.Duration
@@ -51,6 +51,7 @@ type standardHostPool struct {
 }
 
 type StandardHostPoolOptions struct {
+	Logger Logger
 	// Host retry parameters
 	InitialRetryDelay time.Duration
 	MaxRetryInterval  time.Duration
@@ -71,6 +72,7 @@ func New(hosts []string) HostPool {
 		returnUnhealthy:   true,
 		hosts:             make(map[string]*hostEntry, len(hosts)),
 		hostList:          make([]*hostEntry, len(hosts)),
+		logger:            DefaultLogger{},
 		initialRetryDelay: initialRetryDelay,
 		maxRetryInterval:  maxRetryInterval,
 	}
@@ -93,11 +95,15 @@ func NewWithOptions(hosts []string, options StandardHostPoolOptions) HostPool {
 		returnUnhealthy:   true,
 		hosts:             make(map[string]*hostEntry, len(hosts)),
 		hostList:          make([]*hostEntry, len(hosts)),
+		logger:            DefaultLogger{},
 		initialRetryDelay: initialRetryDelay,
 		maxRetryInterval:  maxRetryInterval,
 		failureWindow:     defaultFailureWindow,
 	}
 
+	if options.Logger != nil {
+		p.logger = options.Logger
+	}
 	if options.InitialRetryDelay > 0 {
 		p.initialRetryDelay = options.InitialRetryDelay
 	}
@@ -227,7 +233,7 @@ func (p *standardHostPool) markSuccess(hostR HostPoolResponse) {
 
 	h, ok := p.hosts[host]
 	if !ok {
-		log.Fatalf("host %s not in HostPool %v", host, p.Hosts())
+		p.logger.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 	h.dead = false
 }
@@ -239,14 +245,14 @@ func (p *standardHostPool) markFailed(hostR HostPoolResponse) {
 
 	h, ok := p.hosts[host]
 	if !ok {
-		log.Fatalf("host %s not in HostPool %v", host, p.Hosts())
+		p.logger.Fatalf("host %s not in HostPool %v", host, p.Hosts())
 	}
 	if !h.dead {
 		if h.failures != nil {
 			ts := time.Now()
 			h.failures.insert(ts)
 			if h.failures.since(ts.Add(-p.failureWindow)) > p.maxFailures {
-				log.Printf("host %s exceeded %d failures in %s", h.host, p.maxFailures, p.failureWindow)
+				p.logger.Printf("host %s exceeded %d failures in %s", h.host, p.maxFailures, p.failureWindow)
 				h.markDead(p.initialRetryDelay)
 			}
 		} else {
