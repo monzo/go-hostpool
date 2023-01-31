@@ -13,13 +13,16 @@ type hostEntry struct {
 	retryDelay time.Duration
 	dead       bool
 	failures   *ringBuffer
-	successes  *ringBuffer
 
 	epsilonCounts          []int64 // ring of counts observed
 	epsilonValues          []int64 // ring of total time observations observed
 	epsilonIndex           int     // current index in the ring
 	epsilonWeightedTotal   float64 // The total not including the active bucket
 	epsilonWeightedLastVal float64 // The last non-zero count average
+
+	bucketedSuccess []int64 // successes observed by bucket
+	bucketedFailure []int64 // errors observed by time bucket
+	bucketedIndex   int     // current index in the ring
 }
 
 func (h *hostEntry) canTryHost(now time.Time) bool {
@@ -66,6 +69,13 @@ func (h *hostEntry) epsilonDecay() {
 	h.calculateWeightedAverages()
 }
 
+func (h *hostEntry) bucketedRotate() {
+	// Move to the next position in the ring
+	h.bucketedIndex = (h.bucketedIndex + 1) % len(h.bucketedSuccess)
+	h.bucketedSuccess[h.bucketedIndex] = 0
+	h.bucketedFailure[h.bucketedIndex] = 0
+}
+
 func (h *hostEntry) calculateWeightedAverages() {
 	// We start with the oldest entry in the ring and move forward, coming up to
 	// the most recent entry (but not the current one which is when i = 0
@@ -90,6 +100,21 @@ func (h *hostEntry) calculateWeightedAverages() {
 
 	h.epsilonWeightedTotal = total
 	h.epsilonWeightedLastVal = lastValue
+}
+
+func (h *hostEntry) requestBucketStatus() (int64, int64) {
+	var successCount int64
+	var failureCount int64
+	for i := range h.bucketedSuccess {
+		successCount += h.bucketedSuccess[i]
+		failureCount += h.bucketedFailure[i]
+	}
+	return successCount, failureCount
+}
+
+func (h *hostEntry) calculateErrorRatio() float64 {
+	successCount, failureCount := h.requestBucketStatus()
+	return float64(failureCount) / float64(failureCount+successCount)
 }
 
 func (h *hostEntry) markDead(initialRetryDelay time.Duration) {
